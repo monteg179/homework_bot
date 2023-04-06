@@ -6,20 +6,12 @@ class HomeworkError(Exception):
 
     def __eq__(self, __value: object) -> bool:
         """Docstring."""
-        return str(self) == str(__value)
+        return type(self) is type(__value) and self.args == __value.args
 
 
 class RequestError(HomeworkError):
     """Docstring."""
 
 
-class CheckResponseError(HomeworkError):
-    """Docstring."""
-
-
 class ParseResponseError(HomeworkError):
-    """Docstring."""
-
-
-class SendMessageError(HomeworkError):
     """Docstring."""

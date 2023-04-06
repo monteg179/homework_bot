@@ -1,11 +1,12 @@
 """Docstring."""
 
+from http import HTTPStatus
 import logging
 import os
 import requests
 import sys
 import time
-from typing import Any, Final, Mapping
+from typing import Any, Final
 
 import telegram
 import dotenv
@@ -18,8 +19,8 @@ PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-RETRY_PERIOD = 600.0
-ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
+RETRY_PERIOD = 60 * 10
+ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses_/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
 HOMEWORK_VERDICTS: dict[str, str] = {
@@ -32,26 +33,26 @@ HOMEWORK_VERDICTS: dict[str, str] = {
 class Logger():
     """Docstring."""
 
-    FORMAT: Final[str] = ('%(asctime)s  [%(levelname)s]  '
-                          '[%(filename)s:%(lineno)s] [%(funcName)s]  '
-                          '%(message)s')
+    STREAM_FORMAT: Final[str] = '%(asctime)s  [%(levelname)s]  %(message)s'
 
-    FILE_NAME: Final[str] = 'homeworks.log'
+    FILE_FORMAT: Final[str] = ('%(asctime)s  [%(levelname)s]  '
+                               '[%(filename)s:%(lineno)s] '
+                               '[%(funcName)s]  %(message)s')
+
+    FILE_NAME: Final[str] = 'blackbox.log'
 
     @staticmethod
     def create(name: str) -> logging.Logger:
         """Docstring."""
-        formatter = logging.Formatter(Logger.FORMAT)
+        logging.basicConfig(
+            format=Logger.STREAM_FORMAT,
+            level=logging.DEBUG,
+            stream=sys.stdout
+        )
         file_handler = logging.FileHandler(Logger.FILE_NAME, mode='a')
-        file_handler.setFormatter(formatter)
-        file_handler.setLevel(logging.DEBUG)
-        stream_handler = logging.StreamHandler(sys.stdout)
-        stream_handler.setFormatter(formatter)
-        stream_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(Logger.FILE_FORMAT))
         logger = logging.getLogger(name)
-        logger.setLevel(logging.DEBUG)
         logger.addHandler(file_handler)
-        logger.addHandler(stream_handler)
         return logger
 
 
@@ -60,135 +61,122 @@ logger = Logger.create(__name__)
 
 def check_tokens() -> bool:
     """Проверка доступности переменных окружения."""
-    error_prefix = 'Отсутствует обязательная переменная'
-    names = ['PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID']
-    global_vars = globals()
-    result = True
-    for name in names:
-        if global_vars.get(name) is None:
-            result = False
-            logger.critical(f'{error_prefix} {name}')
-    return result
+    env = (PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
+    return all(env)
 
 
 def send_message(bot: telegram.Bot, message: str) -> None:
     """Отправка сообщения в Telegram."""
-    try:
-        logger.debug(f'Отправка сообщения: {message}')
-        bot.send_message(TELEGRAM_CHAT_ID, message)
-        logger.debug('Отправка сообщение выполнена успешно')
-    except Exception as error:
-        error_text = str(error)
-        logger.error(error_text)
-        raise exceptions.SendMessageError(error_text) from error
-
-
-def send_alarm(bot: telegram.Bot, message: str) -> None:
-    """Отправка сообщения в Telegram с подавлением исключений."""
+    logger.debug('Отправка сообщения')
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
-        logger.debug('Отправка сообщение выполнена успешно')
     except Exception as error:
-        logger.error(str(error))
+        logger.error(f'Ошибка отправки сообщения {str(error)}')
+    else:
+        logger.debug('Отправка сообщения выполнена успешно')
 
 
 def get_api_answer(timestamp: int) -> dict[str, Any]:
     """Запрос к API Практикум.Домашка."""
+    logger.debug('Запрос к Практикум.Домашка')
     try:
-        response = requests.get(
+        response: requests.Response = requests.get(
             url=ENDPOINT,
             headers=HEADERS,
             params={'from_date': timestamp}
         )
-        # response.raise_for_status()
-        if response.status_code != 200:
-            error_text = f'http error: status_code = {response.status_code}'
-            raise requests.HTTPError(error_text)
+        if response.status_code != HTTPStatus.OK:
+            error_msg = (
+                f'HTTP error: {response.status_code} '
+                f'{response.reason} '
+                f'{response.text} '
+                f'{response.request.url} '
+                f'{response.request.headers} '
+                f'{timestamp}'
+            )
+            logger.debug(error_msg)
+            raise requests.HTTPError(response)
         json = response.json()
+    except Exception as error:
+        error_msg = f'Ошибка запроса к Практикум.Домашка: {str(error)}'
+        raise exceptions.RequestError(error_msg) from error
+    else:
         logger.debug('Запрос к Практикум.Домашка выполнен успешно')
         return json
-    except Exception as error:
-        error_text = str(error)
-        logger.error(error_text)
-        raise exceptions.RequestError(error_text) from error
 
 
 def check_response(response: dict[str, Any]) -> bool:
     """Проверка ответа API Практикум.Домашка."""
-    error_prefix = 'Ошибка проверки ответа:'
-    if not isinstance(response, Mapping):
-        error_text = f'{error_prefix} response: {type(response)}'
-        logger.error(error_text)
-        raise TypeError(error_text)
+    logger.debug('Проверка ответа Практикум.Домашка')
+    if not isinstance(response, dict):
+        error_msg = (
+            f'Ошибка проверки ответа, '
+            f'response: {type(response)} = `{response}`'
+        )
+        raise TypeError(error_msg)
     current_date = response.get('current_date')
     if not isinstance(current_date, int):
-        error_text = (f'{error_prefix} current_date: '
-                      f'{type(current_date)} = "{current_date}"')
-        logger.error(error_text)
-        raise TypeError(error_text)
+        error_msg = (
+            f'Ошибка проверки ответа, '
+            f'current_date: {type(current_date)} = `{current_date}`'
+        )
+        raise TypeError(error_msg)
     homeworks = response.get('homeworks')
     if not isinstance(homeworks, list):
-        error_text = f'{error_prefix} homeworks: {type(homeworks)}'
-        logger.error(error_text)
-        raise TypeError(error_text)
-    for homework in homeworks:
-        name = homework.get('homework_name')
-        if not name or not isinstance(name, str):
-            error_text = (f'{error_prefix} homework_name: '
-                          f'{type(name)} = "{name}"')
-            logger.error(error_text)
-            raise TypeError(error_text)
-        status = homework.get('status')
-        if not status or not isinstance(status, str):
-            error_text = f'{error_prefix} status: {type(status)} = {status}'
-            logger.error(error_text)
-            raise TypeError(error_text)
+        error_msg = (
+            f'Ошибка проверки ответа, '
+            f'homeworks: {type(homeworks)} = `{homeworks}`'
+        )
+        raise TypeError(error_msg)
     logger.debug('Проверка ответа Практикум.Домашка выполнена успешно')
     return True
 
 
 def parse_status(homework: dict[str, Any]) -> str:
     """Парсинг ответа API Практикум.Домашка."""
+    logger.debug('Парсинг ответа Практикум.Домашка')
     try:
-        homework_name: str = homework['homework_name']
-        status: str = homework['status']
+        homework_name = homework['homework_name']
+        status = homework['status']
         verdict = HOMEWORK_VERDICTS[status]
+    except KeyError as error:
+        error_msg = f'Ошибка парсинга ответа Практикум.Домашка {str(error)}'
+        raise exceptions.ParseResponseError(error_msg) from error
+    else:
         logger.debug('Парсинг ответа Практикум.Домашка выполнен успешно')
         return f'Изменился статус проверки работы "{homework_name}". {verdict}'
-    except Exception as error:
-        error_text = str(error)
-        logger.error(error_text)
-        raise exceptions.ParseResponseError(error_text) from error
 
 
 def main():
     """Основная логика работы бота."""
     if not check_tokens():
-        logger.info('Программа будет принудительно остановлена')
-        sys.exit()
+        error_msg = ('Отсутствуют обязательные переменные окружения. '
+                     'Программа будет принудительно остановлена')
+        logger.critical(error_msg)
+        sys.exit(1)
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    logger.debug('Запуск Telegram-бота')
     last_error = None
     timestamp = int(time.time())
-    # timestamp = 0
+    logger.debug(f'Запуск Telegram-бота, timestamp = {timestamp}')
     while True:
         try:
-            response: dict[str, Any] = get_api_answer(timestamp)
+            response = get_api_answer(timestamp)
             check_response(response)
             timestamp = response.get('current_date')
-            homeworks: list[dict[str, Any]] = response.get('homeworks')
-            if len(homeworks) == 0:
-                logger.debug('В ответе нет новых статусов')
-            for homework in homeworks:
-                message = parse_status(homework)
+            homeworks = response.get('homeworks')
+            if homeworks:
+                message = parse_status(homeworks[0])
                 send_message(bot, message)
+            else:
+                logger.debug('В ответе нет новых статусов')
             last_error = None
-        except exceptions.SendMessageError:
-            pass
+        except exceptions.HomeworkError as homework_error:
+            logger.error(str(homework_error))
+            if homework_error != last_error:
+                send_message(bot, str(homework_error))
+            last_error = homework_error
         except Exception as error:
-            if error != last_error:
-                send_alarm(bot, str(error))
-            last_error = error
+            logger.error(str(error))
         finally:
             time.sleep(RETRY_PERIOD)
 
