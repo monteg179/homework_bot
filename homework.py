@@ -167,13 +167,12 @@ def main():
             else:
                 logger.debug('В ответе нет новых статусов')
             last_error = None
-        except exceptions.HomeworkError as homework_error:
-            homework_error_str = str(homework_error)
-            logger.error(homework_error_str)
-            if (homework_error.need_notify() and
-                    homework_error_str != str(last_error)):
-                send_message(bot, homework_error_str)
-                last_error = homework_error
+        except exceptions.HomeworkError as error:
+            error_str = str(error)
+            logger.error(error_str)
+            if error.need_notify() and error_str != str(last_error):
+                send_message(bot, error_str)
+                last_error = error
         except Exception as error:
             error_str = str(error)
             logger.error(error_str, exc_info=error)
