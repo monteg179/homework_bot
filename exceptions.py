@@ -1,16 +1,22 @@
 """Docstring."""
 
+from requests import RequestException
+
 
 class HomeworkError(Exception):
     """Docstring."""
 
-    def __eq__(self, __value: object) -> bool:
+    def need_notify(self) -> bool:
         """Docstring."""
-        return type(self) is type(__value) and self.args == __value.args
+        return False
 
 
 class RequestError(HomeworkError):
     """Docstring."""
+
+    def need_notify(self) -> bool:
+        """Docstring."""
+        return isinstance(self.__cause__, RequestException)
 
 
 class ParseResponseError(HomeworkError):

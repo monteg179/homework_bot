@@ -30,7 +30,7 @@ HOMEWORK_VERDICTS: dict[str, str] = {
 }
 
 
-class Logger():
+class Logger:
     """Docstring."""
 
     STREAM_FORMAT: Final[str] = '%(asctime)s  [%(levelname)s]  %(message)s'
@@ -107,7 +107,6 @@ def get_api_answer(timestamp: int) -> dict[str, Any]:
 
 def check_response(response: dict[str, Any]) -> bool:
     """Проверка ответа API Практикум.Домашка."""
-    logger.debug('Проверка ответа Практикум.Домашка')
     if not isinstance(response, dict):
         error_msg = (
             f'Ошибка проверки ответа, '
@@ -128,8 +127,6 @@ def check_response(response: dict[str, Any]) -> bool:
             f'homeworks: {type(homeworks)} = `{homeworks}`'
         )
         raise TypeError(error_msg)
-    logger.debug('Проверка ответа Практикум.Домашка выполнена успешно')
-    return True
 
 
 def parse_status(homework: dict[str, Any]) -> str:
@@ -171,12 +168,18 @@ def main():
                 logger.debug('В ответе нет новых статусов')
             last_error = None
         except exceptions.HomeworkError as homework_error:
-            logger.error(str(homework_error))
-            if homework_error != last_error:
-                send_message(bot, str(homework_error))
-            last_error = homework_error
+            homework_error_str = str(homework_error)
+            logger.error(homework_error_str)
+            if (homework_error.need_notify() and
+                    homework_error_str != str(last_error)):
+                send_message(bot, homework_error_str)
+                last_error = homework_error
         except Exception as error:
-            logger.error(str(error))
+            error_str = str(error)
+            logger.error(error_str, exc_info=error)
+            if error_str != str(last_error):
+                send_message(bot, error_str)
+                last_error = error
         finally:
             time.sleep(RETRY_PERIOD)
 
